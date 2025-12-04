@@ -1,0 +1,143 @@
+import pybullet as p
+import pybullet_data
+import time
+import math
+
+# =======================================
+# INICIAR PYBULLET
+# =======================================
+p.connect(p.GUI)
+p.setGravity(0, 0, -9.8)
+p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+plane = p.loadURDF("plane.urdf")
+
+# =======================================
+# BALDE (RECIPIENTE)
+# =======================================
+BUCKET_CENTER = [0.55, 0.0, 0.0]
+
+wall_thickness = 0.01
+bucket_height = 0.25
+bucket_radius = 0.15
+
+# fundo
+floor_shape = p.createCollisionShape(
+    p.GEOM_BOX,
+    halfExtents=[bucket_radius, bucket_radius, wall_thickness]
+)
+floor = p.createMultiBody(
+    baseMass=0,
+    baseCollisionShapeIndex=floor_shape,
+    basePosition=[BUCKET_CENTER[0], BUCKET_CENTER[1], BUCKET_CENTER[2] + wall_thickness]
+)
+
+# paredes
+wall_shape = p.createCollisionShape(
+    p.GEOM_BOX,
+    halfExtents=[bucket_radius, wall_thickness, bucket_height/2]
+)
+
+p.createMultiBody(0, wall_shape, -1,
+    [BUCKET_CENTER[0], BUCKET_CENTER[1] + bucket_radius, bucket_height/2])
+p.createMultiBody(0, wall_shape, -1,
+    [BUCKET_CENTER[0], BUCKET_CENTER[1] - bucket_radius, bucket_height/2])
+
+wall_shape_side = p.createCollisionShape(
+    p.GEOM_BOX,
+    halfExtents=[wall_thickness, bucket_radius, bucket_height/2]
+)
+
+p.createMultiBody(0, wall_shape_side, -1,
+    [BUCKET_CENTER[0] + bucket_radius, BUCKET_CENTER[1], bucket_height/2])
+p.createMultiBody(0, wall_shape_side, -1,
+    [BUCKET_CENTER[0] - bucket_radius, BUCKET_CENTER[1], bucket_height/2])
+
+print("Balde criado!")
+
+# =======================================
+# ROBÔ
+# =======================================
+robot = p.loadURDF("kuka_iiwa/model.urdf", [0, 0, 0], useFixedBase=True)
+
+# =======================================
+# FUNÇÕES
+# =======================================
+def move_joints(target, speed=2.0):
+    steps = int(240 * speed)
+    for _ in range(steps):
+        for j in range(len(target)):
+            curr = p.getJointState(robot, j)[0]
+            new = curr + (target[j] - curr) * 0.07
+            p.setJointMotorControl2(robot, j, p.POSITION_CONTROL, new, force=600)
+        p.stepSimulation()
+        time.sleep(1/240)
+
+def ik_to(target):
+    downward = p.getQuaternionFromEuler([math.pi, 0, 0])
+    sol = p.calculateInverseKinematics(robot, 6, target, downward)
+    return sol[:7]
+
+# =======================================
+# POSIÇÕES IMPORTANTES
+# =======================================
+
+SPAWN_POS = [
+    BUCKET_CENTER[0],
+    BUCKET_CENTER[1],
+    BUCKET_CENTER[2] + bucket_height - 0.05
+]
+
+LIXO_POS = [0.30, -0.60, 0.25]
+
+APPROACH_HEIGHT = 0.22
+LIFT_HEIGHT = 0.32
+
+# posição inicial CERTA (lá em cima e segura)
+HOME_POS = [BUCKET_CENTER[0], BUCKET_CENTER[1], 0.45]
+
+# =======================================
+# LOOP INFINITO
+# =======================================
+while True:
+
+    # --- NOVA EXIGÊNCIA ---
+    # Antes de criar o próximo cubo, o braço deve sempre voltar ao HOME
+    move_joints(ik_to(HOME_POS))
+    print("Robô no HOME. Criando novo cubo...")
+
+    # ---- criar cubo dentro do balde ----
+    cube = p.loadURDF("cube_small.urdf", SPAWN_POS)
+    print("Novo cubo criado dentro do balde!")
+
+    time.sleep(0.3)
+
+    # 1) ir acima do cubo
+    move_joints(ik_to([SPAWN_POS[0], SPAWN_POS[1], APPROACH_HEIGHT]))
+
+    # 2) descer
+    move_joints(ik_to(SPAWN_POS))
+
+    # 3) ímã
+    cid = p.createConstraint(robot, 6, cube, -1, p.JOINT_FIXED, [0,0,0], [0,0,0], [0,0,0])
+    print("Cubo pego!")
+
+    # 4) levantar
+    move_joints(ik_to([SPAWN_POS[0], SPAWN_POS[1], LIFT_HEIGHT]))
+
+    # 5) levar para o lixo
+    move_joints(ik_to([LIXO_POS[0], LIXO_POS[1], LIFT_HEIGHT]))
+    move_joints(ik_to([LIXO_POS[0], LIXO_POS[1], LIXO_POS[2]]))
+
+    # 6) soltar cubo
+    p.removeConstraint(cid)
+    print("Cubo descartado!")
+
+    # 7) sobe antes de retornar
+    move_joints(ik_to([LIXO_POS[0], LIXO_POS[1], APPROACH_HEIGHT]))
+
+    # 8) volta ao HOME (agora garantido e sempre antes do próximo ciclo)
+    move_joints(ik_to(HOME_POS))
+    print("Retornou ao HOME, pronto para o próximo ciclo.")
+
+    time.sleep(0.3)
