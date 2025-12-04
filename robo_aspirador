@@ -139,7 +139,7 @@ robo = p.createMultiBody(
     basePosition=[0, 0, ROBO_ALTURA/2]
 )
 
-velocidade = 5.0
+velocidade = 50.0
 direcao = random.uniform(0, 2 * math.pi)
 
 distancia_total = 0.0
